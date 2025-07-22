@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Altitude Session Summary and Visualiser</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js for creating charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- date-fns adapter for Chart.js time scale -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <!-- Chart.js zoom plugin -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom/dist/chartjs-plugin-zoom.min.js"></script>
+    <!-- jsPDF and html2canvas for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- Inter font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-7xl">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Altitude Session Summary and Visualiser</h1>
+            <p class="text-gray-600 mt-2">Select the session that you would like to review.</p>
+        </header>
+
+        <main>
+            <!-- File Selector Dropdown -->
+            <div class="max-w-md mx-auto">
+                <label for="file-selector" class="block text-sm font-medium text-gray-700">Select a Session File:</label>
+                <select id="file-selector" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                    <!-- Options will be populated by JavaScript -->
+                </select>
+            </div>
+
+            <!-- Area to display messages or errors -->
+            <div id="message-area" class="text-center mt-4 text-red-500 font-medium"></div>
+            
+            <!-- Toolbar for chart actions -->
+            <div id="chart-toolbar" class="mt-8 text-center" style="display: none;">
+                <button id="reset-zoom-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-300 mr-2">Reset Zoom</button>
+                <button id="download-pdf-btn" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-300">Download PDF</button>
+            </div>
+
+            <!-- Canvas for the chart -->
+            <div id="chart-container" class="mt-4 bg-white p-4 rounded-xl shadow-lg" style="display: none;">
+                <canvas id="data-chart"></canvas>
+            </div>
+
+            <!-- Container for Set Analysis -->
+            <div id="set-analysis-container" class="mt-8" style="display: none;">
+                <h2 class="text-2xl font-bold text-center mb-4">Altitude Set Analysis</h2>
+                <div class="bg-white p-4 rounded-xl shadow-lg overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Set</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg HR</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Max HR</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Power (Work)</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Peak Power</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lactate (mmol/L)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="set-analysis-body" class="bg-white divide-y divide-gray-200">
+                            <!-- Set data will be dynamically inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // --- DOM element references ---
+        const fileSelector = document.getElementById('file-selector');
+        const chartToolbar = document.getElementById('chart-toolbar');
+        const chartContainer = document.getElementById('chart-container');
+        const messageArea = document.getElementById('message-area');
+        const resetZoomBtn = document.getElementById('reset-zoom-btn');
+        const downloadPdfBtn = document.getElementById('download-pdf-btn');
+        const setAnalysisContainer = document.getElementById('set-analysis-container');
+        const setAnalysisBody = document.getElementById('set-analysis-body');
+        let dataChart = null;
+
+        // --- Mock file data ---
+        const tcxFiles = [
+            "Tim Anderson_Altitude Session 1_2025.tcx",
+            "Tim Anderson_Altitude Session 2_2025.tcx",
+            "Tim Anderson_Altitude Session 3_2025.tcx",
+            "Tim Anderson_Altitude Session 4_2025.tcx",
+            "Tim Anderson_Altitude Session 5_2025.tcx",
+            "Tim Anderson_Altitude Session 6_2025.tcx",
+            "Tim Anderson_Altitude Session 7_2025.tcx"    
+        ];
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            populateFileSelector();
+            fileSelector.addEventListener('change', handleFileSelection);
+            resetZoomBtn.addEventListener('click', () => dataChart?.resetZoom());
+            downloadPdfBtn.addEventListener('click', downloadPDF);
+        });
+
+        // --- Core Functions ---
+        
+        function populateFileSelector() {
+            fileSelector.innerHTML = '<option value="">Select a file...</option>';
+            tcxFiles.forEach(fileName => {
+                const option = document.createElement('option');
+                option.value = fileName;
+                option.textContent = fileName.replace(/_/g, ' ').replace('.tcx', '');
+                fileSelector.appendChild(option);
+            });
+        }
+
+        async function handleFileSelection() {
+            const fileName = fileSelector.value;
+            if (!fileName) {
+                chartToolbar.style.display = 'none';
+                chartContainer.style.display = 'none';
+                setAnalysisContainer.style.display = 'none';
+                return;
+            }
+
+            messageArea.textContent = `Loading ${fileName}...`;
+            
+            try {
+                // Fetch TCX file
+                const tcxFilePath = `./data/${fileName}`;
+                const tcxResponse = await fetch(tcxFilePath);
+                if (!tcxResponse.ok) throw new Error(`Could not find TCX file: ${fileName}.`);
+                const tcxContent = await tcxResponse.text();
+
+                // Attempt to fetch corresponding Lactate CSV file
+                const lactateFileName = fileName.replace('.tcx', '_Lactate.csv');
+                const lactateFilePath = `./data/${lactateFileName}`;
+                let lactateData = {};
+                try {
+                    const lactateResponse = await fetch(lactateFilePath);
+                    if (lactateResponse.ok) {
+                        const lactateContent = await lactateResponse.text();
+                        lactateData = parseLactateCSV(lactateContent);
+                    } else {
+                        console.warn(`Lactate file not found for ${fileName}, proceeding without it.`);
+                    }
+                } catch (e) {
+                     console.warn(`Could not load lactate data: ${e.message}`);
+                }
+
+                parseTCX(tcxContent, lactateData);
+                messageArea.textContent = '';
+            } catch (error) {
+                console.error("File loading error:", error);
+                displayMessage(error.message);
+                chartToolbar.style.display = 'none';
+                chartContainer.style.display = 'none';
+                setAnalysisContainer.style.display = 'none';
+            }
+        }
+
+        function parseLactateCSV(csvContent) {
+            const lactateData = {};
+            const lines = csvContent.trim().split('\n');
+            for (let i = 1; i < lines.length; i++) { // Start at 1 to skip header
+                const [set, lactate] = lines[i].split(',');
+                if (set && lactate) {
+                    lactateData[set.trim()] = parseFloat(lactate.trim());
+                }
+            }
+            return lactateData;
+        }
+
+        function parseTCX(tcxContent, lactateData) {
+            try {
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(tcxContent, "application/xml");
+                if (xmlDoc.getElementsByTagName("parsererror").length > 0) throw new Error("Could not parse XML.");
+
+                const trackpoints = xmlDoc.getElementsByTagName('Trackpoint');
+                if (trackpoints.length === 0) throw new Error("No trackpoints found.");
+
+                const labels = [], heartRates = [], watts = [];
+                for (let point of trackpoints) {
+                    const timeEl = point.getElementsByTagName('Time')[0];
+                    if (!timeEl) continue;
+                    labels.push(new Date(timeEl.textContent));
+
+                    const hrEl = point.getElementsByTagName('HeartRateBpm')[0];
+                    heartRates.push(hrEl ? parseInt(hrEl.getElementsByTagName('Value')[0].textContent, 10) : null);
+
+                    const wattsEl = point.querySelector('[TagName="ns3:Watts"], Watts');
+                    watts.push(wattsEl ? parseInt(wattsEl.textContent, 10) : null);
+                }
+                
+                const processedWatts = processPowerData(watts);
+                
+                createChart(labels, heartRates, processedWatts);
+                analyzeAndDisplaySets(labels, heartRates, processedWatts, lactateData);
+
+            } catch (error) {
+                console.error("Parsing error:", error);
+                displayMessage(error.message || "An error occurred while parsing the file.");
+            }
+        }
+
+        function processPowerData(originalWatts) {
+            const processedWatts = [...originalWatts];
+            const flatlineThreshold = 5;
+            for (let i = 0; i < processedWatts.length; i++) {
+                const currentPower = processedWatts[i];
+                if (currentPower === null || currentPower === 0) continue;
+
+                let streakEnd = i + 1;
+                while (streakEnd < processedWatts.length && processedWatts[streakEnd] === currentPower) streakEnd++;
+                
+                if (streakEnd - i > flatlineThreshold) {
+                    for (let j = i + 1; j < streakEnd; j++) processedWatts[j] = 0;
+                    i = streakEnd - 1;
+                }
+            }
+            return processedWatts;
+        }
+
+        function analyzeAndDisplaySets(labels, heartRates, watts, lactateData) {
+            // UPDATED: Rest period is now 2min 15s (135 seconds)
+            const restThresholdSeconds = 135; 
+            // UPDATED: A "work" interval is now defined as power > 250W
+            const workPowerThreshold = 250; 
+            const minSetDuration = 15;
+
+            // 1. Identify all continuous "work chunks" based on the new power threshold
+            let workChunks = [];
+            let inWorkChunk = false;
+            let currentChunkStart = 0;
+
+            for (let i = 0; i < watts.length; i++) {
+                const isWorking = (watts[i] ?? 0) > workPowerThreshold;
+                if (isWorking && !inWorkChunk) {
+                    // Start of a new chunk
+                    inWorkChunk = true;
+                    currentChunkStart = i;
+                } else if (!isWorking && inWorkChunk) {
+                    // End of a chunk
+                    inWorkChunk = false;
+                    workChunks.push({ start: currentChunkStart, end: i - 1 });
+                }
+            }
+            // Add the last chunk if the session ends on a work interval
+            if (inWorkChunk) {
+                workChunks.push({ start: currentChunkStart, end: watts.length - 1 });
+            }
+
+            if (workChunks.length === 0) {
+                displaySetAnalysis([], {});
+                return;
+            }
+
+            // 2. Merge adjacent chunks separated by short rests
+            let mergedSets = [workChunks[0]];
+            for (let i = 1; i < workChunks.length; i++) {
+                const lastSet = mergedSets[mergedSets.length - 1];
+                const currentChunk = workChunks[i];
+                const restDuration = (labels[currentChunk.start].getTime() - labels[lastSet.end].getTime()) / 1000;
+
+                if (restDuration < restThresholdSeconds) {
+                    // Merge this chunk into the previous set
+                    lastSet.end = currentChunk.end;
+                } else {
+                    // This is a new set
+                    mergedSets.push(currentChunk);
+                }
+            }
+
+            // 3. Calculate metrics for each merged set and filter by duration
+            const finalSets = mergedSets
+                .map(set => calculateSetMetrics(labels, heartRates, watts, set.start, set.end))
+                .filter(set => set.durationSeconds >= minSetDuration);
+
+            displaySetAnalysis(finalSets, lactateData);
+        }
+
+
+        function calculateSetMetrics(labels, heartRates, watts, startIndex, endIndex) {
+            const setLabels = labels.slice(startIndex, endIndex + 1);
+            const setHeartRates = heartRates.slice(startIndex, endIndex + 1);
+            const setWatts = watts.slice(startIndex, endIndex + 1);
+
+            let hrSum = 0, hrCount = 0, maxHr = 0;
+            let powerSum = 0, powerCount = 0, peakPower = 0;
+
+            for (let i = 0; i < setLabels.length; i++) {
+                if (setHeartRates[i] !== null) {
+                    hrSum += setHeartRates[i];
+                    hrCount++;
+                    if (setHeartRates[i] > maxHr) maxHr = setHeartRates[i];
+                }
+                if (setWatts[i] !== null && setWatts[i] > 0) {
+                    powerSum += setWatts[i];
+                    powerCount++;
+                    if (setWatts[i] > peakPower) peakPower = setWatts[i];
+                }
+            }
+            
+            const durationSeconds = (setLabels[setLabels.length - 1].getTime() - setLabels[0].getTime()) / 1000;
+            const minutes = Math.floor(durationSeconds / 60);
+            const seconds = Math.round(durationSeconds % 60);
+
+            return {
+                durationSeconds: durationSeconds,
+                duration: `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`,
+                avgHr: hrCount > 0 ? Math.round(hrSum / hrCount) : 'N/A',
+                maxHr: maxHr > 0 ? maxHr : 'N/A',
+                avgWorkingPower: powerCount > 0 ? Math.round(powerSum / powerCount) : 0,
+                peakPower: peakPower > 0 ? peakPower : 'N/A',
+            };
+        }
+
+        function displaySetAnalysis(sets, lactateData) {
+            setAnalysisBody.innerHTML = '';
+            if (sets.length === 0) {
+                setAnalysisContainer.style.display = 'none';
+                return;
+            }
+
+            sets.forEach((set, index) => {
+                const setNumber = index + 1;
+                const lactateValue = lactateData[setNumber] || 'N/A';
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${setNumber}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${set.duration}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${set.avgHr} bpm</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${set.maxHr} bpm</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${set.avgWorkingPower} W</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${set.peakPower} W</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${lactateValue}</td>
+                `;
+                setAnalysisBody.appendChild(row);
+            });
+
+            setAnalysisContainer.style.display = 'block';
+        }
+
+        function displayMessage(message) {
+            messageArea.textContent = message;
+        }
+
+        function createChart(labels, heartRates, watts) {
+            chartToolbar.style.display = 'block';
+            chartContainer.style.display = 'block';
+            const ctx = document.getElementById('data-chart').getContext('2d');
+            if (dataChart) dataChart.destroy();
+
+            dataChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Heart Rate (BPM)',
+                            data: heartRates,
+                            borderColor: 'rgba(239, 68, 68, 1)',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            yAxisID: 'y-hr',
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 5,
+                        },
+                        {
+                            label: 'Power (Watts)',
+                            data: watts,
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            yAxisID: 'y-watts',
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 5,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false, 
+                    interaction: { mode: 'index', intersect: false },
+                    stacked: false,
+                    plugins: {
+                        title: { display: true, text: 'Heart Rate and Power over Time', font: { size: 18 } },
+                        tooltip: { callbacks: { title: ctx => ctx[0].label.toLocaleString() } },
+                        zoom: {
+                            pan: { enabled: true, mode: 'xy', threshold: 5 },
+                            zoom: { wheel: { enabled: true }, pinch: { enabled: true }, drag: { enabled: true, backgroundColor: 'rgba(0,123,255,0.25)' }, mode: 'xy' }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { tooltipFormat: 'yyyy-MM-dd HH:mm:ss', displayFormats: { minute: 'HH:mm', hour: 'HH:mm' } },
+                            title: { display: true, text: 'Time' }
+                        },
+                        'y-hr': {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: 'Heart Rate (BPM)', color: 'rgba(239, 68, 68, 1)' },
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: 'rgba(239, 68, 68, 1)' }
+                        },
+                        'y-watts': {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: { display: true, text: 'Power (Watts)', color: 'rgba(59, 130, 246, 1)' },
+                            ticks: { color: 'rgba(59, 130, 246, 1)' }
+                        }
+                    }
+                }
+            });
+            chartContainer.style.height = '500px';
+        }
+
+        async function downloadPDF() {
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF({
+                orientation: 'p',
+                unit: 'mm',
+                format: 'a4'
+            });
+
+            downloadPdfBtn.textContent = 'Generating...';
+            downloadPdfBtn.disabled = true;
+
+            try {
+                const chartCanvas = await html2canvas(document.getElementById('chart-container'), {
+                    scale: 2,
+                    logging: false,
+                    useCORS: true
+                });
+                const chartImgData = chartCanvas.toDataURL('image/png');
+                
+                const pdfWidth = 210;
+                const pdfHeight = 297;
+                const margin = 10;
+                const contentWidth = pdfWidth - (margin * 2);
+                
+                const chartImgProps = pdf.getImageProperties(chartImgData);
+                const chartHeight = (chartImgProps.height * contentWidth) / chartImgProps.width;
+                pdf.addImage(chartImgData, 'PNG', margin, margin, contentWidth, chartHeight);
+
+                if (setAnalysisContainer.style.display !== 'none') {
+                    const tableCanvas = await html2canvas(document.getElementById('set-analysis-container'), {
+                        scale: 2,
+                        logging: false,
+                        useCORS: true
+                    });
+                    const tableImgData = tableCanvas.toDataURL('image/png');
+
+                    const tableImgProps = pdf.getImageProperties(tableImgData);
+                    const tableHeight = (tableImgProps.height * contentWidth) / tableImgProps.width;
+                    
+                    if (margin + chartHeight + 10 + tableHeight > pdfHeight) {
+                        pdf.addPage();
+                        pdf.addImage(tableImgData, 'PNG', margin, margin, contentWidth, tableHeight);
+                    } else {
+                        pdf.addImage(tableImgData, 'PNG', margin, margin + chartHeight + 10, contentWidth, tableHeight);
+                    }
+                }
+
+                pdf.save('training-analysis.pdf');
+
+            } catch (error) {
+                console.error("Error generating PDF:", error);
+                displayMessage("Sorry, there was an error creating the PDF.");
+            } finally {
+                downloadPdfBtn.textContent = 'Download PDF';
+                downloadPdfBtn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
